@@ -68,7 +68,6 @@ def procesar_movimientos(df_mov, mapeo, debug_container):
     tienda_cols = []
     for col in df_mov.columns:
         try:
-            # Intenta extraer número al inicio
             parts = str(col).split(' ', 1)
             if parts[0].isdigit():
                 tienda_cols.append(col)
@@ -92,7 +91,6 @@ def procesar_movimientos(df_mov, mapeo, debug_container):
         
         for col in tienda_cols:
             cantidad_raw = row[col]
-            # Convertir a número si es string
             try:
                 cantidad = float(cantidad_raw)
             except:
@@ -211,36 +209,60 @@ def generar_excel_bytes(transfers):
     return output.getvalue()
 
 # ------------------------------------------------------------
-# INTERFAZ STREAMLIT
+# PÁGINA DE TRANSFERENCIAS (funcionalidad original)
 # ------------------------------------------------------------
-st.set_page_config(page_title="Generador de OT", layout="wide")
-st.title("📦 Generador de OT desde movimientos")
+def pagina_transferencias():
+    st.title("📦 Generador de OT desde movimientos")
+    uploaded_file = st.file_uploader("Sube tu archivo Excel (con hoja 'Movimientos')", type=["xlsx"])
+    if uploaded_file:
+        try:
+            df_mov = pd.read_excel(uploaded_file, sheet_name="Movimientos")
+            st.success("✅ Archivo cargado")
+            st.subheader("Vista previa de las primeras filas")
+            st.dataframe(df_mov.head(10))
+            
+            st.subheader("Tipos de datos de las columnas")
+            st.write(df_mov.dtypes)
+            
+            debug_container = st.container()
+            with debug_container:
+                st.subheader("📝 Log de procesamiento")
+            
+            if st.button("🚀 Procesar"):
+                with st.spinner("Procesando..."):
+                    transfers = procesar_movimientos(df_mov, MAPEO_TIENDAS, debug_container)
+                    if transfers:
+                        excel_data = generar_excel_bytes(transfers)
+                        st.success(f"✅ Se generaron {len(transfers)} transferencias")
+                        st.download_button("📥 Descargar Excel", excel_data, f"OT_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                    else:
+                        st.error("No se generaron transferencias. Revisa el log de arriba.")
+        except Exception as e:
+            st.error(f"Error al leer el archivo: {e}")
+            st.info("Asegúrate de que el archivo tenga una hoja llamada exactamente 'Movimientos'.")
 
-uploaded_file = st.file_uploader("Sube tu archivo Excel (con hoja 'Movimientos')", type=["xlsx"])
-if uploaded_file:
-    try:
-        df_mov = pd.read_excel(uploaded_file, sheet_name="Movimientos")
-        st.success("✅ Archivo cargado")
-        st.subheader("Vista previa de las primeras filas")
-        st.dataframe(df_mov.head(10))
-        
-        # Mostrar tipos de datos
-        st.subheader("Tipos de datos de las columnas")
-        st.write(df_mov.dtypes)
-        
-        debug_container = st.container()
-        with debug_container:
-            st.subheader("📝 Log de procesamiento")
-        
-        if st.button("🚀 Procesar"):
-            with st.spinner("Procesando..."):
-                transfers = procesar_movimientos(df_mov, MAPEO_TIENDAS, debug_container)
-                if transfers:
-                    excel_data = generar_excel_bytes(transfers)
-                    st.success(f"✅ Se generaron {len(transfers)} transferencias")
-                    st.download_button("📥 Descargar Excel", excel_data, f"OT_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-                else:
-                    st.error("No se generaron transferencias. Revisa el log de arriba.")
-    except Exception as e:
-        st.error(f"Error al leer el archivo: {e}")
-        st.info("Asegúrate de que el archivo tenga una hoja llamada exactamente 'Movimientos'.")
+# ------------------------------------------------------------
+# PÁGINA DE ÓRDENES DE PEDIDO (en construcción)
+# ------------------------------------------------------------
+def pagina_pedidos():
+    st.title("📋 Generador de Órdenes de Pedido")
+    st.markdown("## 🚧 En construcción 🐉")
+    st.markdown("Próximamente: funcionalidad para formatear órdenes de pedido.")
+    # Puedes añadir un icono más vistoso con HTML/emoji
+    st.markdown("<h1 style='text-align: center;'>🐉✨🚧</h1>", unsafe_allow_html=True)
+
+# ------------------------------------------------------------
+# INTERFAZ PRINCIPAL CON SELECCIÓN
+# ------------------------------------------------------------
+st.set_page_config(page_title="Generador de Documentos", layout="wide")
+
+st.sidebar.title("Navegación")
+opcion = st.sidebar.radio(
+    "¿Qué deseas hacer?",
+    ("Formatear Transferencia", "Formatear Orden de Pedido")
+)
+
+if opcion == "Formatear Transferencia":
+    pagina_transferencias()
+else:
+    pagina_pedidos()
