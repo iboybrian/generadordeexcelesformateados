@@ -228,7 +228,7 @@ def pagina_transferencias():
             df_mov = pd.read_excel(uploaded_file, sheet_name="Movimientos")
             st.success("✅ Archivo cargado")
             st.subheader("Vista previa de las primeras filas")
-            st.dataframe(df_mov.head(10))
+            st.dataframe(df_mov.head(10), width='stretch')
 
             st.subheader("Tipos de datos de las columnas")
             st.write(df_mov.dtypes)
@@ -333,6 +333,7 @@ def procesar_archivo_pedido(uploaded_file):
                     continue
 
                 external_id = f"{proveedor}{tienda}{hoy}"
+                # Construir fila con columnas únicas (segundas apariciones renombradas)
                 nueva_fila = {
                     "EXTERNAL ID": external_id,
                     "PROVEEDOR": proveedor,
@@ -341,15 +342,14 @@ def procesar_archivo_pedido(uploaded_file):
                     "TIPO DE COMPRA OD": "Compras Reabasto",
                     "NOTA": "",
                     "MONEDA": "US Dollar",
-                    "UNIDAD DE NEGOCIO": str(tienda),   # primera aparición
+                    "UNIDAD DE NEGOCIO": str(tienda),
                     "CENTRO DE COSTO": "",
                     "SUBSIDIARIA": "",
                     "ARTICULO": id_interno,
                     "CANTIDAD": cantidad,
                     "COSTO": "",
-                    # duplicadas al final
-                    "UNIDAD DE NEGOCIO": str(tienda),   # segunda aparición
-                    "CENTRO DE COSTO": ""
+                    "UNIDAD DE NEGOCIO_2": str(tienda),   # segunda aparición
+                    "CENTRO DE COSTO_2": ""                # segunda aparición
                 }
                 todas_las_filas.append(nueva_fila)
 
@@ -359,11 +359,13 @@ def procesar_archivo_pedido(uploaded_file):
         return pd.DataFrame()
 
     df_final = pd.DataFrame(todas_las_filas)
+    
+        # Al final, columnas de orden con nombres únicos
     columnas_orden = [
         "EXTERNAL ID", "PROVEEDOR", "NOMBRE PROVEDOR", "FECHA",
         "TIPO DE COMPRA OD", "NOTA", "MONEDA", "UNIDAD DE NEGOCIO",
         "CENTRO DE COSTO", "SUBSIDIARIA", "ARTICULO", "CANTIDAD",
-        "COSTO", "UNIDAD DE NEGOCIO", "CENTRO DE COSTO"
+        "COSTO", "UNIDAD DE NEGOCIO_2", "CENTRO DE COSTO_2"
     ]
     df_final = df_final[columnas_orden]
     return df_final
@@ -376,19 +378,38 @@ def pagina_pedidos():
     uploaded_file = st.file_uploader(
         "Cargar archivo Excel", type=["xlsx"], key="pedido_uploader")
 
-    if uploaded_file is not None:
+        if uploaded_file is not None:
         with st.spinner("Procesando archivo..."):
             df_resultado = procesar_archivo_pedido(uploaded_file)
 
         if not df_resultado.empty:
-            st.success(
-                f"✅ Procesamiento exitoso. Se generaron {len(df_resultado)} filas para la orden de compra.")
+            st.success(f"✅ Procesamiento exitoso. Se generaron {len(df_resultado)} filas para la orden de compra.")
             st.subheader("📊 Vista previa de la orden de compra")
-            st.dataframe(df_resultado, use_container_width=True)
+            # Mostrar el DataFrame con nombres únicos (corregimos 'use_container_width')
+            st.dataframe(df_resultado, width='stretch')
 
+            # Generar CSV con cabeceras duplicadas exactamente como las necesitas
             csv_buffer = io.StringIO()
-            df_resultado.to_csv(
-                csv_buffer, index=False, encoding='utf-8-sig')
+            # Escribir encabezados manualmente (con duplicados)
+            encabezados_csv = [
+                "EXTERNAL ID", "PROVEEDOR", "NOMBRE PROVEDOR", "FECHA",
+                "TIPO DE COMPRA OD", "NOTA", "MONEDA", "UNIDAD DE NEGOCIO",
+                "CENTRO DE COSTO", "SUBSIDIARIA", "ARTICULO", "CANTIDAD",
+                "COSTO", "UNIDAD DE NEGOCIO", "CENTRO DE COSTO"
+            ]
+            csv_buffer.write(','.join(encabezados_csv) + '\n')
+            # Escribir filas, mapeando las columnas '_2' de vuelta al nombre original
+            for _, row in df_resultado.iterrows():
+                fila_csv = [
+                    row["EXTERNAL ID"], row["PROVEEDOR"], row["NOMBRE PROVEDOR"],
+                    row["FECHA"], row["TIPO DE COMPRA OD"], row["NOTA"],
+                    row["MONEDA"], row["UNIDAD DE NEGOCIO"], row["CENTRO DE COSTO"],
+                    row["SUBSIDIARIA"], row["ARTICULO"], row["CANTIDAD"],
+                    row["COSTO"], row["UNIDAD DE NEGOCIO_2"], row["CENTRO DE COSTO_2"]
+                ]
+                # Convertir a string y manejar comas escapando si hace falta
+                fila_str = ','.join(str(v) for v in fila_csv)
+                csv_buffer.write(fila_str + '\n')
             csv_data = csv_buffer.getvalue()
 
             st.download_button(
@@ -396,12 +417,11 @@ def pagina_pedidos():
                 data=csv_data,
                 file_name=f"orden_compra_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
-                use_container_width=True,
+                width='stretch',   # en lugar de use_container_width
                 key="pedido_descarga"
             )
         else:
-            st.error(
-                "No se pudo generar la orden de compra. Revisa el formato del archivo.")
+            st.error("No se pudo generar la orden de compra. Revisa el formato del archivo.")
     else:
         st.info("Por favor, sube un archivo Excel para comenzar.")
 
