@@ -18,7 +18,7 @@ MAPEO_TIENDAS = {
     608: (100, 247, 15),
     609: (103, 248, 15),
     610: (106, 249, 15),
-    
+
     # Costa Rica (subsidiaria 18)
     620: (43, 229, 18),
     621: (46, 233, 18),
@@ -28,18 +28,18 @@ MAPEO_TIENDAS = {
     625: (58, 227, 18),
     626: (61, 232, 18),
     627: (64, 228, 18),
-    
+
     # El Salvador (subsidiaria 16)
     641: (13, 149, 16),
     642: (14, 147, 16),
     643: (15, 148, 16),
-    
+
     # Honduras (subsidiaria 17)
     651: (69, 235, 17),
     652: (72, 236, 17),
     653: (75, 237, 17),
     654: (78, 238, 17),
-    
+
     # Panamá (subsidiaria 19)
     671: (26, 218, 19),
     673: (29, 219, 19),
@@ -73,13 +73,14 @@ def procesar_movimientos(df_mov, mapeo, debug_container):
                 tienda_cols.append(col)
         except:
             pass
-    
+
     debug_container.write(f"📊 Columnas detectadas como tiendas: {tienda_cols}")
-    
+
     if not tienda_cols:
-        debug_container.error("❌ No se detectaron columnas numéricas. Los encabezados deben comenzar con un número (ej. '601', '602 TIENDA X').")
+        debug_container.error(
+            "❌ No se detectaron columnas numéricas. Los encabezados deben comenzar con un número (ej. '601', '602 TIENDA X').")
         return []
-    
+
     transfers = []
     total_filas = 0
     for idx, row in df_mov.iterrows():
@@ -88,7 +89,7 @@ def procesar_movimientos(df_mov, mapeo, debug_container):
         id_interno = row['ID interno']
         origenes = []
         destinos = []
-        
+
         for col in tienda_cols:
             cantidad_raw = row[col]
             try:
@@ -102,16 +103,17 @@ def procesar_movimientos(df_mov, mapeo, debug_container):
                 origenes.append([id_tienda, -cantidad])
             else:
                 destinos.append([id_tienda, cantidad])
-        
+
         if not origenes and not destinos:
             continue
-        
+
         total_origen = sum(c for _, c in origenes)
         total_destino = sum(c for _, c in destinos)
         if abs(total_origen - total_destino) > 0.001:
-            debug_container.warning(f"⚠️ SKU {sku}: desbalanceado (origen {total_origen} vs destino {total_destino})")
+            debug_container.warning(
+                f"⚠️ SKU {sku}: desbalanceado (origen {total_origen} vs destino {total_destino})")
             continue
-        
+
         # Emparejamiento
         orig = origenes.copy()
         dest = destinos.copy()
@@ -121,21 +123,24 @@ def procesar_movimientos(df_mov, mapeo, debug_container):
             o_id, o_cant = orig[0]
             d_id, d_cant = dest[0]
             transferir = min(o_cant, d_cant)
-            
+
             if o_id not in mapeo:
-                debug_container.error(f"❌ Tienda origen {o_id} no está en mapeo (SKU {sku})")
+                debug_container.error(
+                    f"❌ Tienda origen {o_id} no está en mapeo (SKU {sku})")
                 break
             if d_id not in mapeo:
-                debug_container.error(f"❌ Tienda destino {d_id} no está en mapeo (SKU {sku})")
+                debug_container.error(
+                    f"❌ Tienda destino {d_id} no está en mapeo (SKU {sku})")
                 break
-            
+
             unidad_origen, centro_origen, sub_origen = mapeo[o_id]
             unidad_destino, _, sub_destino = mapeo[d_id]
-            
+
             if sub_origen != sub_destino:
-                debug_container.error(f"🌎 Transferencia entre países: {o_id}(sub{sub_origen}) → {d_id}(sub{sub_destino}) - SKU {sku} omitida")
+                debug_container.error(
+                    f"🌎 Transferencia entre países: {o_id}(sub{sub_origen}) → {d_id}(sub{sub_destino}) - SKU {sku} omitida")
                 continue
-            
+
             transfers.append({
                 'subsidiaria_num': sub_origen,
                 'UNIDAD_ORIGEN': unidad_origen,
@@ -145,15 +150,16 @@ def procesar_movimientos(df_mov, mapeo, debug_container):
                 'SKU_NETSUIT': sku,
                 'CANTIDAD': transferir,
             })
-            
+
             orig[0][1] -= transferir
             if orig[0][1] == 0:
                 orig.pop(0)
             dest[0][1] -= transferir
             if dest[0][1] == 0:
                 dest.pop(0)
-    
-    debug_container.info(f"✅ Filas procesadas: {total_filas}. Transferencias generadas: {len(transfers)}")
+
+    debug_container.info(
+        f"✅ Filas procesadas: {total_filas}. Transferencias generadas: {len(transfers)}")
     return transfers
 
 def generar_excel_bytes(transfers):
@@ -169,9 +175,11 @@ def generar_excel_bytes(transfers):
     fecha_serial = fecha_serial_excel(hoy)
     for sub_num, lista in grupos.items():
         df = pd.DataFrame(lista)
-        df['ID_EXTERNO'] = df.apply(lambda row: f"OT{fecha_serial}{row['UNIDAD_ORIGEN']}{row['UNIDAD_DESTINO']}", axis=1)
+        df['ID_EXTERNO'] = df.apply(
+            lambda row: f"OT{fecha_serial}{row['UNIDAD_ORIGEN']}{row['UNIDAD_DESTINO']}", axis=1)
         df['FECHA'] = fecha_serial
-        df['SUBSIDIARIA'] = SUBSIDIARIA_TEXTO.get(sub_num, f"SUBSIDIARIA_{sub_num}")
+        df['SUBSIDIARIA'] = SUBSIDIARIA_TEXTO.get(
+            sub_num, f"SUBSIDIARIA_{sub_num}")
         df['EMPLEADO'] = ''
         df['TRANSPORTISTA'] = 'TRANSPORTE PROPIO'
         columnas_orden = [
@@ -213,43 +221,186 @@ def generar_excel_bytes(transfers):
 # ------------------------------------------------------------
 def pagina_transferencias():
     st.title("📦 Generador de OT desde movimientos")
-    uploaded_file = st.file_uploader("Sube tu archivo Excel (con hoja 'Movimientos')", type=["xlsx"])
+    uploaded_file = st.file_uploader(
+        "Sube tu archivo Excel (con hoja 'Movimientos')", type=["xlsx"])
     if uploaded_file:
         try:
             df_mov = pd.read_excel(uploaded_file, sheet_name="Movimientos")
             st.success("✅ Archivo cargado")
             st.subheader("Vista previa de las primeras filas")
             st.dataframe(df_mov.head(10))
-            
+
             st.subheader("Tipos de datos de las columnas")
             st.write(df_mov.dtypes)
-            
+
             debug_container = st.container()
             with debug_container:
                 st.subheader("📝 Log de procesamiento")
-            
+
             if st.button("🚀 Procesar"):
                 with st.spinner("Procesando..."):
-                    transfers = procesar_movimientos(df_mov, MAPEO_TIENDAS, debug_container)
+                    transfers = procesar_movimientos(
+                        df_mov, MAPEO_TIENDAS, debug_container)
                     if transfers:
                         excel_data = generar_excel_bytes(transfers)
-                        st.success(f"✅ Se generaron {len(transfers)} transferencias")
-                        st.download_button("📥 Descargar Excel", excel_data, f"OT_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                        st.success(
+                            f"✅ Se generaron {len(transfers)} transferencias")
+                        st.download_button(
+                            "📥 Descargar Excel", excel_data,
+                            f"OT_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
                     else:
-                        st.error("No se generaron transferencias. Revisa el log de arriba.")
+                        st.error(
+                            "No se generaron transferencias. Revisa el log de arriba.")
         except Exception as e:
             st.error(f"Error al leer el archivo: {e}")
-            st.info("Asegúrate de que el archivo tenga una hoja llamada exactamente 'Movimientos'.")
+            st.info(
+                "Asegúrate de que el archivo tenga una hoja llamada exactamente 'Movimientos'.")
 
 # ------------------------------------------------------------
-# PÁGINA DE ÓRDENES DE PEDIDO (en construcción)
+# PÁGINA DE ÓRDENES DE PEDIDO (NUEVA FUNCIONALIDAD)
 # ------------------------------------------------------------
+# Mapeo de hojas -> números de tienda que se deben extraer
+TIENDAS_POR_HOJA = {
+    "GT": [601, 602, 605, 607, 608, 610],
+    "SV": [642],
+    "HN": [651, 652],
+    "CR": [620, 621, 622, 623, 625],
+    "PA": [671, 675]
+}
+
+def procesar_archivo_pedido(uploaded_file):
+    """Procesa el archivo Excel y devuelve un DataFrame con el formato de orden de compra."""
+    hoy = datetime.now().strftime("%d/%m/%Y")
+    todas_las_filas = []
+
+    for hoja, tiendas in TIENDAS_POR_HOJA.items():
+        try:
+            df_raw = pd.read_excel(uploaded_file, sheet_name=hoja,
+                                   header=None, dtype=str)
+        except Exception as e:
+            st.warning(f"No se pudo leer la hoja '{hoja}'. Error: {e}")
+            continue
+
+        if len(df_raw) < 14:
+            st.warning(
+                f"La hoja '{hoja}' tiene menos de 14 filas, se omite.")
+            continue
+
+        header_row = df_raw.iloc[12].astype(str).str.strip()
+        col_index_map = {}
+        for idx, val in enumerate(header_row):
+            if val.isdigit():
+                col_index_map[int(val)] = idx
+
+        tiendas_faltantes = [t for t in tiendas if t not in col_index_map]
+        if tiendas_faltantes:
+            st.warning(
+                f"En la hoja '{hoja}' faltan las tiendas: {tiendas_faltantes}. Se omitirán.")
+            tiendas_a_usar = [t for t in tiendas if t in col_index_map]
+        else:
+            tiendas_a_usar = tiendas
+
+        for idx_fila in range(13, len(df_raw)):
+            fila = df_raw.iloc[idx_fila]
+            id_interno = str(fila[1]).strip() if pd.notna(fila[1]) else ""
+            if not id_interno or id_interno == "nan":
+                continue
+
+            proveedor = str(fila[0]).strip() if pd.notna(fila[0]) else ""
+            sku = str(fila[2]).strip() if pd.notna(fila[2]) else ""
+            descripcion = str(fila[3]).strip() if pd.notna(fila[3]) else ""
+            pack = str(fila[4]).strip() if pd.notna(fila[4]) else ""
+
+            for tienda in tiendas_a_usar:
+                idx_col = col_index_map[tienda]
+                valor_cantidad = str(fila[idx_col]).strip() if pd.notna(
+                    fila[idx_col]) else "0"
+                try:
+                    cantidad_limpia = ''.join(
+                        c for c in valor_cantidad if c.isdigit() or c == '.')
+                    cantidad = float(
+                        cantidad_limpia) if cantidad_limpia else 0.0
+                    if cantidad <= 0:
+                        continue
+                    if cantidad.is_integer():
+                        cantidad = int(cantidad)
+                except Exception:
+                    continue
+
+                external_id = f"{proveedor}{tienda}{hoy}"
+                nueva_fila = {
+                    "EXTERNAL ID": external_id,
+                    "PROVEEDOR": proveedor,
+                    "NOMBRE PROVEDOR": "",
+                    "FECHA": hoy,
+                    "TIPO DE COMPRA OD": "Compras Reabasto",
+                    "NOTA": "",
+                    "MONEDA": "US Dollar",
+                    "UNIDAD DE NEGOCIO": str(tienda),   # primera aparición
+                    "CENTRO DE COSTO": "",
+                    "SUBSIDIARIA": "",
+                    "ARTICULO": id_interno,
+                    "CANTIDAD": cantidad,
+                    "COSTO": "",
+                    # duplicadas al final
+                    "UNIDAD DE NEGOCIO": str(tienda),   # segunda aparición
+                    "CENTRO DE COSTO": ""
+                }
+                todas_las_filas.append(nueva_fila)
+
+    if not todas_las_filas:
+        st.warning(
+            "No se encontraron datos para generar la orden de compra. Verifica el archivo.")
+        return pd.DataFrame()
+
+    df_final = pd.DataFrame(todas_las_filas)
+    columnas_orden = [
+        "EXTERNAL ID", "PROVEEDOR", "NOMBRE PROVEDOR", "FECHA",
+        "TIPO DE COMPRA OD", "NOTA", "MONEDA", "UNIDAD DE NEGOCIO",
+        "CENTRO DE COSTO", "SUBSIDIARIA", "ARTICULO", "CANTIDAD",
+        "COSTO", "UNIDAD DE NEGOCIO", "CENTRO DE COSTO"
+    ]
+    df_final = df_final[columnas_orden]
+    return df_final
+
 def pagina_pedidos():
-    st.title("📋 Generador de Órdenes de Pedido")
-    st.markdown("## 🚧 En construcción 🐉")
-    st.markdown("Próximamente: funcionalidad para formatear órdenes de pedido.")
-    # Puedes añadir un icono más vistoso con HTML/emoji
-    st.markdown("<h1 style='text-align: center;'>🐉✨🚧</h1>", unsafe_allow_html=True)
+    st.title("📦 Generador de Orden de Compra")
+    st.markdown(
+        "Sube el archivo `Nuevo Análisis V2.xlsx` para generar el archivo de órdenes de compra.")
+
+    uploaded_file = st.file_uploader(
+        "Cargar archivo Excel", type=["xlsx"], key="pedido_uploader")
+
+    if uploaded_file is not None:
+        with st.spinner("Procesando archivo..."):
+            df_resultado = procesar_archivo_pedido(uploaded_file)
+
+        if not df_resultado.empty:
+            st.success(
+                f"✅ Procesamiento exitoso. Se generaron {len(df_resultado)} filas para la orden de compra.")
+            st.subheader("📊 Vista previa de la orden de compra")
+            st.dataframe(df_resultado, use_container_width=True)
+
+            csv_buffer = io.StringIO()
+            df_resultado.to_csv(
+                csv_buffer, index=False, encoding='utf-8-sig')
+            csv_data = csv_buffer.getvalue()
+
+            st.download_button(
+                label="📥 Descargar CSV",
+                data=csv_data,
+                file_name=f"orden_compra_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="pedido_descarga"
+            )
+        else:
+            st.error(
+                "No se pudo generar la orden de compra. Revisa el formato del archivo.")
+    else:
+        st.info("Por favor, sube un archivo Excel para comenzar.")
 
 # ------------------------------------------------------------
 # INTERFAZ PRINCIPAL CON SELECCIÓN
