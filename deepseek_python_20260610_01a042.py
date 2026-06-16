@@ -288,11 +288,14 @@ def procesar_archivo_pedido(uploaded_file):
                 f"La hoja '{hoja}' tiene menos de 14 filas, se omite.")
             continue
 
-        header_row = df_raw.iloc[12].astype(str).str.strip()
+        header_row = df_raw.iloc[12]                # no forzamos astype(str)
         col_index_map = {}
         for idx, val in enumerate(header_row):
-            if val.isdigit():
-                col_index_map[int(val)] = idx
+            if pd.isna(val):
+                continue
+            val_str = str(val).strip()
+            if val_str.isdigit():
+                col_index_map[int(val_str)] = idx
 
         tiendas_faltantes = [t for t in tiendas if t not in col_index_map]
         if tiendas_faltantes:
