@@ -378,7 +378,7 @@ def pagina_pedidos():
     uploaded_file = st.file_uploader(
         "Cargar archivo Excel", type=["xlsx"], key="pedido_uploader")
 
-        if uploaded_file is not None:
+    if uploaded_file is not None:
         with st.spinner("Procesando archivo..."):
             df_resultado = procesar_archivo_pedido(uploaded_file)
 
