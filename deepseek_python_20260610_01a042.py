@@ -270,10 +270,52 @@ TIENDAS_POR_HOJA = {
     "PA": [671, 675]
 }
 
-def procesar_archivo_pedido(uploaded_file):
+TIPOS_COMPRA = [
+    "Compras Reabasto",
+    "Inventario Primera Vez (Local e Importación)",
+    "Inventariable Bajo Pedido (Local e Importación)",
+    "Pie de Camión",
+]
+
+@st.cache_data
+def cargar_proveedores():
+    """Carga el catálogo de proveedores desde data/Proveedores.xlsx."""
+    try:
+        df = pd.read_excel("data/Proveedores.xlsx", dtype=str)
+        # Crear dict nombre -> ID para lookup rápido
+        lookup = dict(zip(df["Proveedor"].str.strip(), df["ID_PROVEEDOR"].str.strip()))
+        return lookup
+    except Exception as e:
+        st.error(f"⚠️ No se pudo cargar data/Proveedores.xlsx: {e}")
+        return {}
+
+@st.cache_data
+def cargar_tiendas():
+    """Carga el catálogo de tiendas desde data/Unidad_de_Negocio.xlsx."""
+    try:
+        df = pd.read_excel("data/Unidad_de_Negocio.xlsx", dtype=str)
+        lookup = {}
+        for _, row in df.iterrows():
+            num = str(row["No. Tienda"]).strip()
+            lookup[num] = {
+                "unidad_negocio": str(row.get("UNIDAD DE NEGOCIO", "")).strip(),
+                "centro_costo":   str(row.get("CENTRO DE COSTO", "")).strip(),
+                "subsidiaria":    str(row.get("SUBSIDARIA", "")).strip(),
+                "nombre_tienda":  str(row.get("Unidad de Negocio del inventario", "")).strip(),
+            }
+        return lookup
+    except Exception as e:
+        st.error(f"⚠️ No se pudo cargar data/Unidad_de_Negocio.xlsx: {e}")
+        return {}
+
+
+def procesar_archivo_pedido(uploaded_file, tipo_compra):
     """Procesa el archivo Excel y devuelve un DataFrame con el formato de orden de compra."""
     hoy = datetime.now().strftime("%d/%m/%Y")
     todas_las_filas = []
+
+    lookup_prov   = cargar_proveedores()
+    lookup_tienda = cargar_tiendas()
 
     for hoja, tiendas in TIENDAS_POR_HOJA.items():
         try:
@@ -284,11 +326,10 @@ def procesar_archivo_pedido(uploaded_file):
             continue
 
         if len(df_raw) < 14:
-            st.warning(
-                f"La hoja '{hoja}' tiene menos de 14 filas, se omite.")
+            st.warning(f"La hoja '{hoja}' tiene menos de 14 filas, se omite.")
             continue
 
-        header_row = df_raw.iloc[12]                # no forzamos astype(str)
+        header_row = df_raw.iloc[12]
         col_index_map = {}
         for idx, val in enumerate(header_row):
             if pd.isna(val):
@@ -299,8 +340,7 @@ def procesar_archivo_pedido(uploaded_file):
 
         tiendas_faltantes = [t for t in tiendas if t not in col_index_map]
         if tiendas_faltantes:
-            st.warning(
-                f"En la hoja '{hoja}' faltan las tiendas: {tiendas_faltantes}. Se omitirán.")
+            st.warning(f"En la hoja '{hoja}' faltan las tiendas: {tiendas_faltantes}. Se omitirán.")
             tiendas_a_usar = [t for t in tiendas if t in col_index_map]
         else:
             tiendas_a_usar = tiendas
@@ -311,20 +351,20 @@ def procesar_archivo_pedido(uploaded_file):
             if not id_interno or id_interno == "nan":
                 continue
 
-            proveedor = str(fila[0]).strip() if pd.notna(fila[0]) else ""
-            sku = str(fila[2]).strip() if pd.notna(fila[2]) else ""
+            nombre_proveedor = str(fila[0]).strip() if pd.notna(fila[0]) else ""
+            sku         = str(fila[2]).strip() if pd.notna(fila[2]) else ""
             descripcion = str(fila[3]).strip() if pd.notna(fila[3]) else ""
-            pack = str(fila[4]).strip() if pd.notna(fila[4]) else ""
+            pack        = str(fila[4]).strip() if pd.notna(fila[4]) else ""
+
+            # --- CAMBIO 2: lookup de proveedor ---
+            id_proveedor = lookup_prov.get(nombre_proveedor, "#SIN_MATCH")
 
             for tienda in tiendas_a_usar:
                 idx_col = col_index_map[tienda]
-                valor_cantidad = str(fila[idx_col]).strip() if pd.notna(
-                    fila[idx_col]) else "0"
+                valor_cantidad = str(fila[idx_col]).strip() if pd.notna(fila[idx_col]) else "0"
                 try:
-                    cantidad_limpia = ''.join(
-                        c for c in valor_cantidad if c.isdigit() or c == '.')
-                    cantidad = float(
-                        cantidad_limpia) if cantidad_limpia else 0.0
+                    cantidad_limpia = ''.join(c for c in valor_cantidad if c.isdigit() or c == '.')
+                    cantidad = float(cantidad_limpia) if cantidad_limpia else 0.0
                     if cantidad <= 0:
                         continue
                     if cantidad.is_integer():
@@ -332,83 +372,114 @@ def procesar_archivo_pedido(uploaded_file):
                 except Exception:
                     continue
 
-                external_id = f"{proveedor}{tienda}{hoy}"
-                # Construir fila con columnas únicas (segundas apariciones renombradas)
+                # --- CAMBIO 4: lookup de tienda ---
+                tienda_key  = str(tienda)
+                datos_tienda = lookup_tienda.get(tienda_key, {})
+                unidad_neg  = datos_tienda.get("unidad_negocio", "")
+                centro_costo = datos_tienda.get("centro_costo", "")
+                subsidiaria  = datos_tienda.get("subsidiaria", "")
+                nombre_tienda = datos_tienda.get("nombre_tienda", "")
+
+                # --- CAMBIO 4: EXTERNAL ID usa ID de proveedor ---
+                external_id = f"{id_proveedor}{tienda}{hoy}"
+
                 nueva_fila = {
-                    "EXTERNAL ID": external_id,
-                    "PROVEEDOR": proveedor,
-                    "NOMBRE PROVEDOR": "",
-                    "FECHA": hoy,
-                    "TIPO DE COMPRA OD": "Compras Reabasto",
-                    "NOTA": "",
-                    "MONEDA": "US Dollar",
-                    "UNIDAD DE NEGOCIO": str(tienda),
-                    "CENTRO DE COSTO": "",
-                    "SUBSIDIARIA": "",
-                    "ARTICULO": id_interno,
-                    "CANTIDAD": cantidad,
-                    "COSTO": "",
-                    "UNIDAD DE NEGOCIO_2": str(tienda),   # segunda aparición
-                    "CENTRO DE COSTO_2": ""                # segunda aparición
+                    "EXTERNAL ID":             external_id,
+                    "PROVEEDOR":               id_proveedor,        # CAMBIO 2: ID en lugar de nombre
+                    "NOMBRE PROVEDOR":         "",
+                    "FECHA":                   hoy,
+                    "TIPO DE COMPRA OD":       tipo_compra,         # CAMBIO 3: valor del selectbox
+                    "NOTA":                    "",
+                    "MONEDA":                  "US Dollar",
+                    "UNIDAD DE NEGOCIO":       unidad_neg,          # CAMBIO 4: desde Excel
+                    "CENTRO DE COSTO":         centro_costo,        # CAMBIO 4: desde Excel
+                    "SUBSIDIARIA":             subsidiaria,         # CAMBIO 4: desde Excel
+                    "ARTICULO":                id_interno,
+                    "CANTIDAD":                cantidad,
+                    "COSTO":                   "",
+                    "UNIDAD DE NEGOCIO_2":     unidad_neg,          # CAMBIO 5: repite primera
+                    "CENTRO DE COSTO_2":       centro_costo,        # CAMBIO 5: repite primera
+                    "validador.tiendanombre":  nombre_tienda,       # CAMBIO 4: columna validadora
+                    "validador.proveedornombre": nombre_proveedor,  # CAMBIO 2: columna validadora
                 }
                 todas_las_filas.append(nueva_fila)
 
     if not todas_las_filas:
-        st.warning(
-            "No se encontraron datos para generar la orden de compra. Verifica el archivo.")
+        st.warning("No se encontraron datos para generar la orden de compra. Verifica el archivo.")
         return pd.DataFrame()
 
-    df_final = pd.DataFrame(todas_las_filas)
-    
-        # Al final, columnas de orden con nombres únicos
     columnas_orden = [
         "EXTERNAL ID", "PROVEEDOR", "NOMBRE PROVEDOR", "FECHA",
         "TIPO DE COMPRA OD", "NOTA", "MONEDA", "UNIDAD DE NEGOCIO",
         "CENTRO DE COSTO", "SUBSIDIARIA", "ARTICULO", "CANTIDAD",
-        "COSTO", "UNIDAD DE NEGOCIO_2", "CENTRO DE COSTO_2"
+        "COSTO", "UNIDAD DE NEGOCIO_2", "CENTRO DE COSTO_2",
+        "validador.tiendanombre", "validador.proveedornombre",
     ]
-    df_final = df_final[columnas_orden]
+    df_final = pd.DataFrame(todas_las_filas)[columnas_orden]
     return df_final
+
 
 def pagina_pedidos():
     st.title("📦 Generador de Orden de Compra")
-    st.markdown(
-        "Sube el archivo `Nuevo Análisis V2.xlsx` para generar el archivo de órdenes de compra.")
+    st.markdown("Sube el archivo `Nuevo Análisis V2.xlsx` para generar el archivo de órdenes de compra.")
+
+    # --- CAMBIO 1: selector de separador ---
+    separador = st.selectbox(
+        "Separador del CSV",
+        options=[",", ";"],
+        format_func=lambda x: f'Coma  ","' if x == "," else f'Punto y coma  ";"',
+        index=0,
+        key="sep_pedido"
+    )
+
+    # --- CAMBIO 3: tipo de compra ---
+    tipo_compra = st.selectbox(
+        "Tipo de compra",
+        options=TIPOS_COMPRA,
+        index=0,
+        key="tipo_compra_pedido"
+    )
 
     uploaded_file = st.file_uploader(
         "Cargar archivo Excel", type=["xlsx"], key="pedido_uploader")
 
     if uploaded_file is not None:
         with st.spinner("Procesando archivo..."):
-            df_resultado = procesar_archivo_pedido(uploaded_file)
+            df_resultado = procesar_archivo_pedido(uploaded_file, tipo_compra)
 
         if not df_resultado.empty:
             st.success(f"✅ Procesamiento exitoso. Se generaron {len(df_resultado)} filas para la orden de compra.")
             st.subheader("📊 Vista previa de la orden de compra")
-            # Mostrar el DataFrame con nombres únicos (corregimos 'use_container_width')
-            st.dataframe(df_resultado, width='stretch')
+            st.dataframe(df_resultado, use_container_width=True)
 
-            # Generar CSV con cabeceras duplicadas exactamente como las necesitas
+            # --- CAMBIO 1: CSV con separador seleccionado ---
             csv_buffer = io.StringIO()
-            # Escribir encabezados manualmente (con duplicados)
+            # Encabezados con nombres duplicados reales (UNIDAD DE NEGOCIO / CENTRO DE COSTO aparecen dos veces)
             encabezados_csv = [
                 "EXTERNAL ID", "PROVEEDOR", "NOMBRE PROVEDOR", "FECHA",
                 "TIPO DE COMPRA OD", "NOTA", "MONEDA", "UNIDAD DE NEGOCIO",
                 "CENTRO DE COSTO", "SUBSIDIARIA", "ARTICULO", "CANTIDAD",
-                "COSTO", "UNIDAD DE NEGOCIO", "CENTRO DE COSTO"
+                "COSTO", "UNIDAD DE NEGOCIO", "CENTRO DE COSTO",
+                "validador.tiendanombre", "validador.proveedornombre",
             ]
-            csv_buffer.write(','.join(encabezados_csv) + '\n')
-            # Escribir filas, mapeando las columnas '_2' de vuelta al nombre original
+            csv_buffer.write(separador.join(encabezados_csv) + '\n')
             for _, row in df_resultado.iterrows():
-                fila_csv = [
-                    row["EXTERNAL ID"], row["PROVEEDOR"], row["NOMBRE PROVEDOR"],
-                    row["FECHA"], row["TIPO DE COMPRA OD"], row["NOTA"],
-                    row["MONEDA"], row["UNIDAD DE NEGOCIO"], row["CENTRO DE COSTO"],
-                    row["SUBSIDIARIA"], row["ARTICULO"], row["CANTIDAD"],
-                    row["COSTO"], row["UNIDAD DE NEGOCIO_2"], row["CENTRO DE COSTO_2"]
+                fila_vals = [
+                    row["EXTERNAL ID"],   row["PROVEEDOR"],       row["NOMBRE PROVEDOR"],
+                    row["FECHA"],         row["TIPO DE COMPRA OD"], row["NOTA"],
+                    row["MONEDA"],        row["UNIDAD DE NEGOCIO"], row["CENTRO DE COSTO"],
+                    row["SUBSIDIARIA"],   row["ARTICULO"],          row["CANTIDAD"],
+                    row["COSTO"],         row["UNIDAD DE NEGOCIO_2"], row["CENTRO DE COSTO_2"],
+                    row["validador.tiendanombre"], row["validador.proveedornombre"],
                 ]
-                # Convertir a string y manejar comas escapando si hace falta
-                fila_str = ','.join(str(v) for v in fila_csv)
+                # Si el separador es coma, escapar campos que contengan comas
+                if separador == ",":
+                    fila_str = separador.join(
+                        f'"{v}"' if separador in str(v) else str(v)
+                        for v in fila_vals
+                    )
+                else:
+                    fila_str = separador.join(str(v) for v in fila_vals)
                 csv_buffer.write(fila_str + '\n')
             csv_data = csv_buffer.getvalue()
 
@@ -417,7 +488,7 @@ def pagina_pedidos():
                 data=csv_data,
                 file_name=f"orden_compra_{datetime.now().strftime('%Y%m%d')}.csv",
                 mime="text/csv",
-                width='stretch',   # en lugar de use_container_width
+                use_container_width=True,
                 key="pedido_descarga"
             )
         else:
