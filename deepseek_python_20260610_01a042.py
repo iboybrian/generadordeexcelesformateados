@@ -270,6 +270,14 @@ TIENDAS_POR_HOJA = {
     "PA": [671, 675]
 }
 
+# Mapeo para MX (sin PA)
+TIENDAS_POR_HOJA_MX = {
+    "GT-MX": [601, 602, 605, 607, 608, 610],
+    "SV-MX": [642],
+    "HN-MX": [651, 652],
+    "CR-MX": [620, 621, 622, 623, 625],
+}
+
 TIPOS_COMPRA = [
     "Compras Reabasto",
     "Inventario Primera Vez (Local e Importación)",
@@ -308,16 +316,19 @@ def cargar_tiendas():
         st.error(f"⚠️ No se pudo cargar data/Unidad_de_Negocio.xlsx: {e}")
         return {}
 
-
-def procesar_archivo_pedido(uploaded_file, tipo_compra):
-    """Procesa el archivo Excel y devuelve un DataFrame con el formato de orden de compra."""
+def procesar_archivo_pedido_general(uploaded_file, tipo_compra, tiendas_por_hoja, sufijo=""):
+    """
+    Función genérica para procesar archivo de pedido.
+    tiendas_por_hoja: dict con hoja -> lista de tiendas.
+    sufijo: se agrega al nombre del archivo CSV (ej: "_MX").
+    """
     hoy = datetime.now().strftime("%d/%m/%Y")
     todas_las_filas = []
 
     lookup_prov   = cargar_proveedores()
     lookup_tienda = cargar_tiendas()
 
-    for hoja, tiendas in TIENDAS_POR_HOJA.items():
+    for hoja, tiendas in tiendas_por_hoja.items():
         try:
             df_raw = pd.read_excel(uploaded_file, sheet_name=hoja,
                                    header=None, dtype=str)
@@ -356,7 +367,6 @@ def procesar_archivo_pedido(uploaded_file, tipo_compra):
             descripcion = str(fila[3]).strip() if pd.notna(fila[3]) else ""
             pack        = str(fila[4]).strip() if pd.notna(fila[4]) else ""
 
-            # --- CAMBIO 2: lookup de proveedor ---
             id_proveedor = lookup_prov.get(nombre_proveedor, "#SIN_MATCH")
 
             for tienda in tiendas_a_usar:
@@ -372,7 +382,6 @@ def procesar_archivo_pedido(uploaded_file, tipo_compra):
                 except Exception:
                     continue
 
-                # --- CAMBIO 4: lookup de tienda ---
                 tienda_key  = str(tienda)
                 datos_tienda = lookup_tienda.get(tienda_key, {})
                 unidad_neg  = datos_tienda.get("unidad_negocio", "")
@@ -380,27 +389,27 @@ def procesar_archivo_pedido(uploaded_file, tipo_compra):
                 subsidiaria  = datos_tienda.get("subsidiaria", "")
                 nombre_tienda = datos_tienda.get("nombre_tienda", "")
 
-                # --- CAMBIO 4: EXTERNAL ID usa ID de proveedor ---
-                external_id = f"{id_proveedor}{tienda}{hoy}"
+                # External ID: usa ID de proveedor + tienda + fecha (sin espacios)
+                external_id = f"{id_proveedor}{tienda}{hoy.replace('/','')}"
 
                 nueva_fila = {
                     "EXTERNAL ID":             external_id,
-                    "PROVEEDOR":               id_proveedor,        # CAMBIO 2: ID en lugar de nombre
+                    "PROVEEDOR":               id_proveedor,
                     "NOMBRE PROVEDOR":         "",
                     "FECHA":                   hoy,
-                    "TIPO DE COMPRA OD":       tipo_compra,         # CAMBIO 3: valor del selectbox
+                    "TIPO DE COMPRA OD":       tipo_compra,
                     "NOTA":                    "",
                     "MONEDA":                  "US Dollar",
-                    "UNIDAD DE NEGOCIO":       unidad_neg,          # CAMBIO 4: desde Excel
-                    "CENTRO DE COSTO":         centro_costo,        # CAMBIO 4: desde Excel
-                    "SUBSIDIARIA":             subsidiaria,         # CAMBIO 4: desde Excel
+                    "UNIDAD DE NEGOCIO":       unidad_neg,
+                    "CENTRO DE COSTO":         centro_costo,
+                    "SUBSIDIARIA":             subsidiaria,
                     "ARTICULO":                id_interno,
                     "CANTIDAD":                cantidad,
                     "COSTO":                   "",
-                    "UNIDAD DE NEGOCIO_2":     unidad_neg,          # CAMBIO 5: repite primera
-                    "CENTRO DE COSTO_2":       centro_costo,        # CAMBIO 5: repite primera
-                    "validador.tiendanombre":  nombre_tienda,       # CAMBIO 4: columna validadora
-                    "validador.proveedornombre": nombre_proveedor,  # CAMBIO 2: columna validadora
+                    "UNIDAD DE NEGOCIO_2":     unidad_neg,
+                    "CENTRO DE COSTO_2":       centro_costo,
+                    "validador.tiendanombre":  nombre_tienda,
+                    "validador.proveedornombre": nombre_proveedor,
                 }
                 todas_las_filas.append(nueva_fila)
 
@@ -418,12 +427,10 @@ def procesar_archivo_pedido(uploaded_file, tipo_compra):
     df_final = pd.DataFrame(todas_las_filas)[columnas_orden]
     return df_final
 
-
 def pagina_pedidos():
-    st.title("📦 Generador de Orden de Compra")
+    st.title("📦 Generador de Orden de Compra (estándar)")
     st.markdown("Sube el archivo `Nuevo Análisis V2.xlsx` para generar el archivo de órdenes de compra.")
 
-    # --- CAMBIO 1: selector de separador ---
     separador = st.selectbox(
         "Separador del CSV",
         options=[",", ";"],
@@ -432,7 +439,6 @@ def pagina_pedidos():
         key="sep_pedido"
     )
 
-    # --- CAMBIO 3: tipo de compra ---
     tipo_compra = st.selectbox(
         "Tipo de compra",
         options=TIPOS_COMPRA,
@@ -445,16 +451,17 @@ def pagina_pedidos():
 
     if uploaded_file is not None:
         with st.spinner("Procesando archivo..."):
-            df_resultado = procesar_archivo_pedido(uploaded_file, tipo_compra)
+            df_resultado = procesar_archivo_pedido_general(
+                uploaded_file, tipo_compra, TIENDAS_POR_HOJA, sufijo=""
+            )
 
         if not df_resultado.empty:
             st.success(f"✅ Procesamiento exitoso. Se generaron {len(df_resultado)} filas para la orden de compra.")
             st.subheader("📊 Vista previa de la orden de compra")
             st.dataframe(df_resultado, use_container_width=True)
 
-            # --- CAMBIO 1: CSV con separador seleccionado ---
+            # Generar CSV con el separador elegido
             csv_buffer = io.StringIO()
-            # Encabezados con nombres duplicados reales (UNIDAD DE NEGOCIO / CENTRO DE COSTO aparecen dos veces)
             encabezados_csv = [
                 "EXTERNAL ID", "PROVEEDOR", "NOMBRE PROVEDOR", "FECHA",
                 "TIPO DE COMPRA OD", "NOTA", "MONEDA", "UNIDAD DE NEGOCIO",
@@ -472,7 +479,6 @@ def pagina_pedidos():
                     row["COSTO"],         row["UNIDAD DE NEGOCIO_2"], row["CENTRO DE COSTO_2"],
                     row["validador.tiendanombre"], row["validador.proveedornombre"],
                 ]
-                # Si el separador es coma, escapar campos que contengan comas
                 if separador == ",":
                     fila_str = separador.join(
                         f'"{v}"' if separador in str(v) else str(v)
@@ -496,6 +502,80 @@ def pagina_pedidos():
     else:
         st.info("Por favor, sube un archivo Excel para comenzar.")
 
+def pagina_pedidos_mx():
+    st.title("📦 Generador de Orden de Compra (MX)")
+    st.markdown("Sube el archivo `Nuevo Análisis V2.xlsx` para generar el archivo de órdenes de compra con hojas MX (GT-MX, SV-MX, HN-MX, CR-MX).")
+
+    separador = st.selectbox(
+        "Separador del CSV",
+        options=[",", ";"],
+        format_func=lambda x: f'Coma  ","' if x == "," else f'Punto y coma  ";"',
+        index=0,
+        key="sep_pedido_mx"
+    )
+
+    tipo_compra = st.selectbox(
+        "Tipo de compra",
+        options=TIPOS_COMPRA,
+        index=0,
+        key="tipo_compra_pedido_mx"
+    )
+
+    uploaded_file = st.file_uploader(
+        "Cargar archivo Excel", type=["xlsx"], key="pedido_uploader_mx")
+
+    if uploaded_file is not None:
+        with st.spinner("Procesando archivo..."):
+            df_resultado = procesar_archivo_pedido_general(
+                uploaded_file, tipo_compra, TIENDAS_POR_HOJA_MX, sufijo="_MX"
+            )
+
+        if not df_resultado.empty:
+            st.success(f"✅ Procesamiento exitoso. Se generaron {len(df_resultado)} filas para la orden de compra (MX).")
+            st.subheader("📊 Vista previa de la orden de compra (MX)")
+            st.dataframe(df_resultado, use_container_width=True)
+
+            csv_buffer = io.StringIO()
+            encabezados_csv = [
+                "EXTERNAL ID", "PROVEEDOR", "NOMBRE PROVEDOR", "FECHA",
+                "TIPO DE COMPRA OD", "NOTA", "MONEDA", "UNIDAD DE NEGOCIO",
+                "CENTRO DE COSTO", "SUBSIDIARIA", "ARTICULO", "CANTIDAD",
+                "COSTO", "UNIDAD DE NEGOCIO", "CENTRO DE COSTO",
+                "validador.tiendanombre", "validador.proveedornombre",
+            ]
+            csv_buffer.write(separador.join(encabezados_csv) + '\n')
+            for _, row in df_resultado.iterrows():
+                fila_vals = [
+                    row["EXTERNAL ID"],   row["PROVEEDOR"],       row["NOMBRE PROVEDOR"],
+                    row["FECHA"],         row["TIPO DE COMPRA OD"], row["NOTA"],
+                    row["MONEDA"],        row["UNIDAD DE NEGOCIO"], row["CENTRO DE COSTO"],
+                    row["SUBSIDIARIA"],   row["ARTICULO"],          row["CANTIDAD"],
+                    row["COSTO"],         row["UNIDAD DE NEGOCIO_2"], row["CENTRO DE COSTO_2"],
+                    row["validador.tiendanombre"], row["validador.proveedornombre"],
+                ]
+                if separador == ",":
+                    fila_str = separador.join(
+                        f'"{v}"' if separador in str(v) else str(v)
+                        for v in fila_vals
+                    )
+                else:
+                    fila_str = separador.join(str(v) for v in fila_vals)
+                csv_buffer.write(fila_str + '\n')
+            csv_data = csv_buffer.getvalue()
+
+            st.download_button(
+                label="📥 Descargar CSV (MX)",
+                data=csv_data,
+                file_name=f"orden_compra_MX_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="pedido_descarga_mx"
+            )
+        else:
+            st.error("No se pudo generar la orden de compra (MX). Revisa el formato del archivo.")
+    else:
+        st.info("Por favor, sube un archivo Excel para comenzar.")
+
 # ------------------------------------------------------------
 # INTERFAZ PRINCIPAL CON SELECCIÓN
 # ------------------------------------------------------------
@@ -504,10 +584,12 @@ st.set_page_config(page_title="Generador de Documentos", layout="wide")
 st.sidebar.title("Navegación")
 opcion = st.sidebar.radio(
     "¿Qué deseas hacer?",
-    ("Formatear Transferencia", "Formatear Orden de Pedido")
+    ("Formatear Transferencia", "Formatear Orden de Pedido", "Formatear Orden de Pedido (MX)")
 )
 
 if opcion == "Formatear Transferencia":
     pagina_transferencias()
-else:
+elif opcion == "Formatear Orden de Pedido":
     pagina_pedidos()
+else:
+    pagina_pedidos_mx()
