@@ -62,7 +62,7 @@ def fecha_serial_excel(fecha_date):
     base = datetime(1899, 12, 30).date()
     return (fecha_date - base).days
 
-def procesar_movimientos(df_mov, mapeo, debug_container):
+def procesar_movimientos(df_mov, mapeo, debug_container, sheet_name=""):
     """Procesa y muestra mensajes de depuración en el contenedor"""
     # Identificar columnas de tienda
     tienda_cols = []
