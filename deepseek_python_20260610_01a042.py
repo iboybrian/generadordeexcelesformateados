@@ -390,7 +390,7 @@ def procesar_archivo_pedido_general(uploaded_file, tipo_compra, tiendas_por_hoja
                 nombre_tienda = datos_tienda.get("nombre_tienda", "")
 
                 # External ID: usa ID de proveedor + tienda + fecha (sin espacios)
-                external_id = f"{id_proveedor}{tienda}{hoy.replace('/','')}"
+                external_id = f"OcBrian{id_proveedor}{tienda}{hoy.replace('/','')}"
 
                 nueva_fila = {
                     "EXTERNAL ID":             external_id,
@@ -425,6 +425,7 @@ def procesar_archivo_pedido_general(uploaded_file, tipo_compra, tiendas_por_hoja
         "validador.tiendanombre", "validador.proveedornombre",
     ]
     df_final = pd.DataFrame(todas_las_filas)[columnas_orden]
+    df_final = df_final.sort_values(by="EXTERNAL ID", ascending=True).reset_index(drop=True)
     return df_final
 
 def pagina_pedidos():
