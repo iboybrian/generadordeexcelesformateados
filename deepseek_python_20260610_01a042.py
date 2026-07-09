@@ -142,6 +142,7 @@ def procesar_movimientos(df_mov, mapeo, debug_container):
                 continue
 
             transfers.append({
+                'origen_hoja': sheet_name,
                 'subsidiaria_num': sub_origen,
                 'UNIDAD_ORIGEN': unidad_origen,
                 'UNIDAD_DESTINO': unidad_destino,
@@ -167,7 +168,7 @@ def generar_excel_bytes(transfers):
         return None
     grupos = {}
     for t in transfers:
-        sub = t['subsidiaria_num']
+        hoja = t['origen_hoja']
         grupos.setdefault(sub, []).append(t)
     wb = Workbook()
     wb.remove(wb.active)
@@ -178,6 +179,7 @@ def generar_excel_bytes(transfers):
         df['ID_EXTERNO'] = df.apply(
             lambda row: f"OT{fecha_serial}{row['UNIDAD_ORIGEN']}{row['UNIDAD_DESTINO']}", axis=1)
         df['FECHA'] = fecha_serial
+        sub_num = lista[0]['subsidiaria_num']
         df['SUBSIDIARIA'] = SUBSIDIARIA_TEXTO.get(
             sub_num, f"SUBSIDIARIA_{sub_num}")
         df['EMPLEADO'] = ''
@@ -187,7 +189,8 @@ def generar_excel_bytes(transfers):
             'EMPLEADO', 'TRANSPORTISTA', 'ID_INTERNAL', 'SKU_NETSUIT', 'CANTIDAD', 'CENTRO_COSTO'
         ]
         df = df[columnas_orden]
-        sheet_name = NOMBRE_HOJA.get(sub_num, f"OT-{sub_num}")
+        df = df.sort_values(by='ID_EXTERNO', ascending=False).reset_index(drop=True)
+        sheet_name = hoja_nombre[:20]
         ws = wb.create_sheet(title=sheet_name)
         headers = [
             'ID EXTERNO', 'FECHA', 'SUBSIDIARIA', 'UNIDAD DE NEGOCIO DE ORIGEN',
