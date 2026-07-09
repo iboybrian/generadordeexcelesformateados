@@ -225,29 +225,37 @@ def generar_excel_bytes(transfers):
 def pagina_transferencias():
     st.title("📦 Generador de OT desde movimientos")
     uploaded_file = st.file_uploader(
-        "Sube tu archivo Excel (con hoja 'Movimientos')", type=["xlsx"])
+        "Sube tu archivo Excel", type=["xlsx"])
     if uploaded_file:
         try:
-            df_mov = pd.read_excel(uploaded_file, sheet_name="Movimientos")
-            st.success("✅ Archivo cargado")
-            st.subheader("Vista previa de las primeras filas")
-            st.dataframe(df_mov.head(10), width='stretch')
+            # Leer TODAS las hojas como string para evitar problemas de tipos
+            todas_hojas = pd.read_excel(uploaded_file, sheet_name=None, dtype=str)
+            st.success(f"✅ Archivo cargado con {len(todas_hojas)} hoja(s): {list(todas_hojas.keys())}")
 
-            st.subheader("Tipos de datos de las columnas")
-            st.write(df_mov.dtypes)
+            # Mostrar vista previa simple (sin st.dataframe para evitar problemas de Arrow)
+            primera_hoja = list(todas_hojas.keys())[0]
+            st.subheader(f"Vista previa de la hoja '{primera_hoja}' (primeras 10 filas)")
+            st.write(todas_hojas[primera_hoja].head(10))
 
             debug_container = st.container()
             with debug_container:
                 st.subheader("📝 Log de procesamiento")
 
             if st.button("🚀 Procesar"):
-                with st.spinner("Procesando..."):
-                    transfers = procesar_movimientos(
-                        df_mov, MAPEO_TIENDAS, debug_container)
-                    if transfers:
-                        excel_data = generar_excel_bytes(transfers)
+                with st.spinner("Procesando todas las hojas..."):
+                    all_transfers = []
+                    for sheet_name, df_mov in todas_hojas.items():
+                        st.write(f"📄 Procesando hoja: **{sheet_name}**")
+                        transfers_hoja = procesar_movimientos(
+                            df_mov, MAPEO_TIENDAS, debug_container, sheet_name=sheet_name
+                        )
+                        st.write(f"   ↳ {len(transfers_hoja)} transferencias generadas")
+                        all_transfers.extend(transfers_hoja)
+
+                    if all_transfers:
+                        excel_data = generar_excel_bytes(all_transfers)
                         st.success(
-                            f"✅ Se generaron {len(transfers)} transferencias")
+                            f"✅ Se generaron {len(all_transfers)} transferencias en total")
                         st.download_button(
                             "📥 Descargar Excel", excel_data,
                             f"OT_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
@@ -258,8 +266,6 @@ def pagina_transferencias():
                             "No se generaron transferencias. Revisa el log de arriba.")
         except Exception as e:
             st.error(f"Error al leer el archivo: {e}")
-            st.info(
-                "Asegúrate de que el archivo tenga una hoja llamada exactamente 'Movimientos'.")
 
 # ------------------------------------------------------------
 # PÁGINA DE ÓRDENES DE PEDIDO (NUEVA FUNCIONALIDAD)
