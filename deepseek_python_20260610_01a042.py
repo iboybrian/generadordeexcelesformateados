@@ -230,6 +230,8 @@ def pagina_transferencias():
         try:
             # Leer TODAS las hojas como string para evitar problemas de tipos
             todas_hojas = pd.read_excel(uploaded_file, sheet_name=None, dtype=str)
+            for hoja in todas_hojas:
+                todas_hojas[hoja].columns = [str(col) for col in todas_hojas[hoja].columns]
             st.success(f"✅ Archivo cargado con {len(todas_hojas)} hoja(s): {list(todas_hojas.keys())}")
 
             # Mostrar vista previa simple (sin st.dataframe para evitar problemas de Arrow)
