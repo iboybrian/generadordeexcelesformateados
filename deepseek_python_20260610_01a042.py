@@ -169,29 +169,35 @@ def generar_excel_bytes(transfers):
     grupos = {}
     for t in transfers:
         hoja = t['origen_hoja']
-        grupos.setdefault(sub, []).append(t)
+        grupos.setdefault(hoja, []).append(t)
+
     wb = Workbook()
     wb.remove(wb.active)
     hoy = datetime.now().date()
     fecha_serial = fecha_serial_excel(hoy)
-    for sub_num, lista in grupos.items():
+
+    for hoja_nombre, lista in grupos.items():
         df = pd.DataFrame(lista)
         df['ID_EXTERNO'] = df.apply(
             lambda row: f"OT{fecha_serial}{row['UNIDAD_ORIGEN']}{row['UNIDAD_DESTINO']}", axis=1)
         df['FECHA'] = fecha_serial
+
         sub_num = lista[0]['subsidiaria_num']
-        df['SUBSIDIARIA'] = SUBSIDIARIA_TEXTO.get(
-            sub_num, f"SUBSIDIARIA_{sub_num}")
+        df['SUBSIDIARIA'] = SUBSIDIARIA_TEXTO.get(sub_num, f"SUBSIDIARIA_{sub_num}")
         df['EMPLEADO'] = ''
         df['TRANSPORTISTA'] = 'TRANSPORTE PROPIO'
+
         columnas_orden = [
             'ID_EXTERNO', 'FECHA', 'SUBSIDIARIA', 'UNIDAD_ORIGEN', 'UNIDAD_DESTINO',
             'EMPLEADO', 'TRANSPORTISTA', 'ID_INTERNAL', 'SKU_NETSUIT', 'CANTIDAD', 'CENTRO_COSTO'
         ]
         df = df[columnas_orden]
         df = df.sort_values(by='ID_EXTERNO', ascending=False).reset_index(drop=True)
-        sheet_name = hoja_nombre[:20]
+
+        # Nombre de la pestaña igual al de la hoja original, truncado a 31 caracteres
+        sheet_name = hoja_nombre[:31]
         ws = wb.create_sheet(title=sheet_name)
+
         headers = [
             'ID EXTERNO', 'FECHA', 'SUBSIDIARIA', 'UNIDAD DE NEGOCIO DE ORIGEN',
             'UNIDAD DE NEGOCIO DE DESTINO', 'EMPLEADO', 'TRANSPORTISTA', 'ID INTERNAL',
@@ -204,6 +210,8 @@ def generar_excel_bytes(transfers):
                 row['UNIDAD_DESTINO'], row['EMPLEADO'], row['TRANSPORTISTA'], row['ID_INTERNAL'],
                 row['SKU_NETSUIT'], row['CANTIDAD'], row['CENTRO_COSTO']
             ])
+
+        # Ajustar ancho de columnas
         for col in ws.columns:
             max_len = 0
             col_letter = col[0].column_letter
@@ -214,6 +222,7 @@ def generar_excel_bytes(transfers):
                 except:
                     pass
             ws.column_dimensions[col_letter].width = min(max_len + 2, 30)
+
     output = io.BytesIO()
     wb.save(output)
     output.seek(0)
