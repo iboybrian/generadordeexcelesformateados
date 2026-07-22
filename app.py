@@ -691,7 +691,6 @@ def procesar_archivo_pedido(uploaded_file, tipo_compra, tiendas_por_hoja):
     if error_tienda:
         avisos.append(error_tienda)
 
-    correlativo = 0
 
     for hoja, tiendas in tiendas_por_hoja.items():
         try:
@@ -752,14 +751,11 @@ def procesar_archivo_pedido(uploaded_file, tipo_compra, tiendas_por_hoja):
                 subsidiaria = datos_tienda.get("subsidiaria", "")
                 nombre_tienda = datos_tienda.get("nombre_tienda", "")
 
-                # FIX: el ID anterior era OcBrian{prov}{tienda}{fecha}, identico
-                # para todos los articulos del mismo proveedor/tienda/dia y
-                # ambiguo por concatenacion sin separador. Se agregan guiones
-                # y un correlativo global.
-                correlativo += 1
-                external_id = (
-                    f"OC-{id_proveedor}-{tienda}-{hoy_compacto}-{correlativo:05d}"
-                )
+                # EXTERNAL ID agrupador: identico para todas las lineas del
+                # mismo proveedor + tienda + fecha. NetSuite lo usa como clave
+                # de agrupacion para armar una sola orden de compra, por lo
+                # que NO debe ser unico por fila.
+                external_id = f"OcBrian{id_proveedor}{tienda}{hoy_compacto}"
 
                 filas.append({
                     "EXTERNAL ID": external_id,
@@ -785,7 +781,11 @@ def procesar_archivo_pedido(uploaded_file, tipo_compra, tiendas_por_hoja):
         return pd.DataFrame(), avisos, sin_match
 
     df_final = pd.DataFrame(filas)[COLUMNAS_OC]
-    df_final = df_final.sort_values(by="EXTERNAL ID").reset_index(drop=True)
+    # kind="stable": agrupa las lineas del mismo EXTERNAL ID de forma contigua
+    # sin alterar el orden en que fueron leidas dentro de cada grupo.
+    df_final = df_final.sort_values(
+        by="EXTERNAL ID", kind="stable"
+    ).reset_index(drop=True)
     return df_final, avisos, sin_match
 
 

@@ -69,20 +69,23 @@ constantes al inicio de `app.py`.
 Los proveedores que no coincidan con el catálogo aparecen como `#SIN_MATCH`
 y se listan como error en pantalla antes de descargar.
 
-## ID externo
+## IDs externos: son agrupadores, no únicos
 
-El `ID EXTERNO` de las transferencias es **compartido**, no único por fila:
-`OT{fecha_serial}{unidad_origen}{unidad_destino}`. Todas las líneas de un
-mismo par origen-destino llevan el mismo código porque NetSuite agrupa por
-ese ID para armar un solo documento de transferencia.
+NetSuite importa las líneas agrupadas por ID externo, así que **todas las
+líneas de un mismo documento comparten el mismo código**. Los IDs NO deben
+ser únicos por fila. En ambos módulos las filas se ordenan por ese código
+(orden estable) para que las líneas de cada documento queden contiguas.
 
-Las filas se ordenan por ese código para que las líneas de cada documento
-queden juntas.
+| Módulo | Formato | Agrupa por |
+|---|---|---|
+| Transferencias | `OT{fecha_serial}{unidad_origen}{unidad_destino}` | par origen-destino |
+| Órdenes de compra | `OcBrian{id_proveedor}{tienda}{ddmmyyyy}` | proveedor + tienda + fecha |
 
-> Nota: el formato concatena sin separadores, por lo que en teoría podría
-> ser ambiguo. Verificado contra `MAPEO_TIENDAS` actual: 0 colisiones en los
-> 166 pares posibles dentro de una misma subsidiaria. Si se agregan tiendas
-> nuevas, conviene revalidarlo.
+> Nota: ambos formatos concatenan sin separadores, por lo que en teoría
+> podrían ser ambiguos. Verificado contra los catálogos actuales:
+> 0 colisiones en los 166 pares de tiendas posibles dentro de una misma
+> subsidiaria, y 0 en las 16.675 combinaciones proveedor × tienda.
+> Conviene revalidarlo si se agregan tiendas o proveedores.
 
 ## Rendimiento
 
