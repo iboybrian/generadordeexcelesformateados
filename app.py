@@ -569,9 +569,14 @@ def generar_excel_bytes(transfers, con_stock=False):
     """
     Genera el libro de Excel con una hoja por hoja de origen.
 
-    Si con_stock es True, agrega las columnas de stock inicial/resultante
-    y conserva el orden de procesamiento (los saldos son acumulativos, por
-    lo que reordenar haria ilegible la secuencia de descuentos).
+    El ID externo es COMPARTIDO por par origen-destino: todas las lineas de
+    un mismo par llevan el mismo codigo, porque NetSuite agrupa por ese ID
+    para armar un solo documento de transferencia. Las filas se ordenan por
+    ID externo para que las lineas del mismo documento queden contiguas.
+
+    Si con_stock es True, agrega las columnas de stock inicial/resultante.
+    Los saldos ya vienen calculados en el orden real de procesamiento; el
+    orden estable conserva su secuencia dentro de cada grupo.
     """
     if not transfers:
         return None
@@ -590,14 +595,12 @@ def generar_excel_bytes(transfers, con_stock=False):
     for hoja_nombre, lista in grupos.items():
         df = pd.DataFrame(lista)
 
-        # FIX: el ID externo anterior era OT{fecha}{origen}{destino}, identico
-        # para todos los SKU del mismo par de tiendas en el mismo dia. Se
-        # agregan separadores y un correlativo para garantizar unicidad.
+        # ID externo agrupador: identico para todas las lineas del mismo par
+        # origen-destino. NetSuite lo usa como clave de agrupacion, por lo que
+        # NO debe ser unico por fila.
         df["ID_EXTERNO"] = [
-            "OT-{}-{}-{}-{:04d}".format(
-                fecha_serial, fila["UNIDAD_ORIGEN"], fila["UNIDAD_DESTINO"], i + 1
-            )
-            for i, fila in enumerate(lista)
+            f"OT{fecha_serial}{fila['UNIDAD_ORIGEN']}{fila['UNIDAD_DESTINO']}"
+            for fila in lista
         ]
         df["FECHA"] = fecha_serial
 
@@ -607,8 +610,11 @@ def generar_excel_bytes(transfers, con_stock=False):
         df["TRANSPORTISTA"] = "TRANSPORTE PROPIO"
 
         df = df[columnas]
-        if not con_stock:
-            df = df.sort_values(by="ID_EXTERNO", ascending=False).reset_index(drop=True)
+        # kind="stable": agrupa por ID sin alterar el orden relativo dentro
+        # de cada grupo, para que la secuencia de saldos siga siendo legible.
+        df = df.sort_values(
+            by="ID_EXTERNO", ascending=True, kind="stable"
+        ).reset_index(drop=True)
 
         ws = wb.create_sheet(title=str(hoja_nombre)[:31])
         ws.append(encabezados)

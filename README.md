@@ -37,9 +37,9 @@ adicionales: `STOCK INICIAL ORIGEN`, `STOCK NUEVO ORIGEN`,
 - Los saldos negativos **no bloquean** la transferencia: se generan igual y
   se listan en pantalla como error para revisión manual.
 - `Nivel de stock de seguridad de la ubicación` se ignora.
-- Cuando se carga stock, las filas **conservan el orden de procesamiento**
-  en lugar de ordenarse por ID externo, para que la secuencia de descuentos
-  sea legible.
+- Las filas se ordenan por ID externo (ascendente, orden estable) para que
+  las líneas del mismo documento queden contiguas y los saldos acumulativos
+  se lean en secuencia.
 
 ## Instalación
 
@@ -68,6 +68,21 @@ constantes al inicio de `app.py`.
 
 Los proveedores que no coincidan con el catálogo aparecen como `#SIN_MATCH`
 y se listan como error en pantalla antes de descargar.
+
+## ID externo
+
+El `ID EXTERNO` de las transferencias es **compartido**, no único por fila:
+`OT{fecha_serial}{unidad_origen}{unidad_destino}`. Todas las líneas de un
+mismo par origen-destino llevan el mismo código porque NetSuite agrupa por
+ese ID para armar un solo documento de transferencia.
+
+Las filas se ordenan por ese código para que las líneas de cada documento
+queden juntas.
+
+> Nota: el formato concatena sin separadores, por lo que en teoría podría
+> ser ambiguo. Verificado contra `MAPEO_TIENDAS` actual: 0 colisiones en los
+> 166 pares posibles dentro de una misma subsidiaria. Si se agregan tiendas
+> nuevas, conviene revalidarlo.
 
 ## Rendimiento
 
