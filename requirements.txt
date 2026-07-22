@@ -1,3 +1,4 @@
-streamlit
-pandas
-openpyxl
+# Rangos con límite superior para evitar que un major upgrade rompa la app.
+streamlit>=1.30,<2.0
+pandas>=2.0,<3.1
+openpyxl>=3.1,<4.0
