@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.streamlit/secrets.toml
+*.xlsx
+*.csv
+!data/Proveedores.xlsx
+!data/Unidad_de_Negocio.xlsx
+~$*
+.DS_Store
+.idea/
+.vscode/

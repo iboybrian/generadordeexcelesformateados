@@ -7,9 +7,39 @@ importar a NetSuite.
 
 | Módulo | Entrada | Salida |
 |---|---|---|
-| Formatear Transferencia | Excel de movimientos (cantidades +/- por tienda) | Excel de Órdenes de Transferencia, una hoja por hoja de origen |
+| Formatear Transferencia | Excel de movimientos (cantidades +/- por tienda) + CSV de stock (opcional) | Excel de Órdenes de Transferencia, una hoja por hoja de origen |
 | Formatear Orden de Pedido | `Nuevo Análisis V2.xlsx` (hojas GT, SV, HN, CR, PA) | CSV de Órdenes de Compra |
 | Formatear Orden de Pedido (MX) | Igual, hojas `*-MX` (sin PA) | CSV de Órdenes de Compra |
+
+## Cálculo de stock (opcional, solo transferencias)
+
+Si se sube un CSV de existencias, el Excel resultante incluye cuatro columnas
+adicionales: `STOCK INICIAL ORIGEN`, `STOCK NUEVO ORIGEN`,
+`STOCK INICIAL DESTINO`, `STOCK NUEVO DESTINO`.
+
+**Columnas requeridas del CSV:** `SKU`, `Ubicación del inventario`,
+`Físico en ubicación`. Se aceptan con acentos correctos o con mojibake
+(UTF-8 leído como Latin-1, ej. `UbicaciÃ³n`); la app repara el texto sola.
+
+**Reglas aplicadas:**
+
+- El número de tienda se extrae de los dígitos de `Ubicación del inventario`
+  (`OD | GT | 601 TIENDA MAJADAS` → `601`).
+- Las ubicaciones cuyo número no esté en `MAPEO_TIENDAS` se descartan
+  (bodegas externas como `20601`, otros países). Se listan como aviso.
+- El cruce con las transferencias es por **SKU**.
+- Los saldos son **acumulativos**: si una tienda envía varias veces, cada
+  fila descuenta del saldo corriente. Origen con 20 que envía 10 y luego 5
+  termina en 5.
+- **Celda de stock vacía = 0.** La tienda aparece en el archivo, por lo
+  tanto su existencia es cero y puede quedar en negativo.
+- **SKU+tienda ausente del archivo** = columnas en blanco, sin advertencia.
+- Los saldos negativos **no bloquean** la transferencia: se generan igual y
+  se listan en pantalla como error para revisión manual.
+- `Nivel de stock de seguridad de la ubicación` se ignora.
+- Cuando se carga stock, las filas **conservan el orden de procesamiento**
+  en lugar de ordenarse por ID externo, para que la secuencia de descuentos
+  sea legible.
 
 ## Instalación
 

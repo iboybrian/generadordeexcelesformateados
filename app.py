@@ -122,10 +122,21 @@ COLUMNAS_OT = [
     "CENTRO_COSTO",
 ]
 
+# Columnas extra que se agregan solo si se cargo un archivo de stock
+COLUMNAS_OT_STOCK = [
+    "STOCK_INICIAL_ORIGEN", "STOCK_NUEVO_ORIGEN",
+    "STOCK_INICIAL_DESTINO", "STOCK_NUEVO_DESTINO",
+]
+
 ENCABEZADOS_OT = [
     "ID EXTERNO", "FECHA", "SUBSIDIARIA", "UNIDAD DE NEGOCIO DE ORIGEN",
     "UNIDAD DE NEGOCIO DE DESTINO", "EMPLEADO", "TRANSPORTISTA", "ID INTERNAL",
     "SKU NETSUIT", "CANTIDAD", "CENTRO DE COSTO",
+]
+
+ENCABEZADOS_OT_STOCK = [
+    "STOCK INICIAL ORIGEN", "STOCK NUEVO ORIGEN",
+    "STOCK INICIAL DESTINO", "STOCK NUEVO DESTINO",
 ]
 
 COLUMNAS_OC = [
@@ -146,6 +157,15 @@ ENCABEZADOS_OC_CSV = [
 ]
 
 SIN_MATCH = "#SIN_MATCH"
+
+# ------------------------------------------------------------
+# ARCHIVO DE STOCK (CSV opcional para transferencias)
+# ------------------------------------------------------------
+# Nombres de columna aceptados. Se busca la primera que exista, ya sea con
+# acentos correctos o con mojibake (UTF-8 leido como Latin-1).
+COL_STOCK_SKU = ["SKU"]
+COL_STOCK_UBICACION = ["Ubicación del inventario", "UbicaciÃ³n del inventario"]
+COL_STOCK_FISICO = ["Físico en ubicación", "FÃ­sico en ubicaciÃ³n"]
 
 
 # ------------------------------------------------------------
@@ -217,6 +237,172 @@ def formatear_cantidad(valor, decimales=4):
     if valor.is_integer():
         return int(valor)
     return valor
+
+
+def reparar_mojibake(texto):
+    """
+    Repara texto UTF-8 que fue leido como Latin-1 ('PRÃ“CERES' -> 'PRÓCERES').
+
+    Si el texto ya es correcto, la operacion falla y se devuelve intacto,
+    por lo que es seguro aplicarla siempre.
+    """
+    if not isinstance(texto, str):
+        return texto
+    try:
+        return texto.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return texto
+
+
+def resolver_columna(df, nombres_posibles):
+    """Devuelve el primer nombre de columna que exista en el DataFrame."""
+    for nombre in nombres_posibles:
+        if nombre in df.columns:
+            return nombre
+    return None
+
+
+def extraer_numero_tienda(texto):
+    """
+    Extrae el numero de tienda de 'OD | GT | 601 TIENDA MAJADAS' -> 601.
+
+    Toma el primer grupo de digitos que aparezca despues del ultimo '|'.
+    Devuelve None si no encuentra ninguno.
+    """
+    if not isinstance(texto, str):
+        return None
+    parte = texto.split("|")[-1].strip()
+    match = re.search(r"\d+", parte)
+    return int(match.group()) if match else None
+
+
+def cargar_stock(archivo_csv):
+    """
+    Carga el CSV de stock y devuelve (stock, avisos).
+
+    stock: dict {(sku, num_tienda): cantidad_float}
+    Solo incluye tiendas presentes en MAPEO_TIENDAS; el resto se descarta
+    (bodegas externas como 20601, tiendas de otros paises, etc).
+
+    Una celda de stock vacia se interpreta como 0, no como ausente: la
+    tienda aparece en el archivo, por lo tanto su existencia es cero.
+    """
+    avisos = []
+
+    try:
+        df = pd.read_csv(archivo_csv, dtype=str, keep_default_na=False)
+    except Exception as e:
+        return {}, [f"No se pudo leer el CSV de stock: {e}"]
+
+    df.columns = [reparar_mojibake(str(c)) for c in df.columns]
+
+    col_sku = resolver_columna(df, COL_STOCK_SKU)
+    col_ubi = resolver_columna(df, [reparar_mojibake(c) for c in COL_STOCK_UBICACION])
+    col_fis = resolver_columna(df, [reparar_mojibake(c) for c in COL_STOCK_FISICO])
+
+    faltantes = []
+    if col_sku is None:
+        faltantes.append("SKU")
+    if col_ubi is None:
+        faltantes.append("Ubicación del inventario")
+    if col_fis is None:
+        faltantes.append("Físico en ubicación")
+    if faltantes:
+        return {}, [
+            f"El CSV de stock no tiene las columnas requeridas: {faltantes}. "
+            f"Columnas encontradas: {list(df.columns)[:10]}..."
+        ]
+
+    stock = {}
+    descartadas = set()
+    duplicadas = 0
+
+    for _, fila in df.iterrows():
+        sku = str(fila[col_sku]).strip()
+        if not sku or sku.lower() == "nan":
+            continue
+
+        ubicacion = reparar_mojibake(str(fila[col_ubi]))
+        num_tienda = extraer_numero_tienda(ubicacion)
+
+        if num_tienda is None or num_tienda not in MAPEO_TIENDAS:
+            if num_tienda is not None:
+                descartadas.add(num_tienda)
+            continue
+
+        clave = (sku, num_tienda)
+        if clave in stock:
+            # Regla acordada: conservar el primero
+            duplicadas += 1
+            continue
+
+        cantidad = parsear_cantidad(fila[col_fis])
+        stock[clave] = 0.0 if cantidad is None else cantidad
+
+    if descartadas:
+        avisos.append(
+            f"Se ignoraron ubicaciones fuera del mapeo de tiendas: "
+            f"{sorted(descartadas)}"
+        )
+    if duplicadas:
+        avisos.append(
+            f"Se encontraron {duplicadas} combinación(es) SKU+tienda repetidas; "
+            "se conservó la primera."
+        )
+
+    return stock, avisos
+
+
+def calcular_stock_resultante(transfers, stock):
+    """
+    Agrega columnas de stock inicial y resultante a cada transferencia.
+
+    Aplica las salidas y entradas de forma acumulativa en el orden en que
+    aparecen las transferencias, de modo que una tienda que envia varias
+    veces refleje el saldo corriente.
+
+    Devuelve la lista de incidencias (saldos negativos).
+    """
+    incidencias = []
+    saldo = dict(stock)          # copia mutable, se va descontando
+    conocidos = set(stock)       # claves presentes en el archivo original
+
+    for t in transfers:
+        sku = str(t["SKU_NETSUIT"]).strip()
+        clave_origen = (sku, t["TIENDA_ORIGEN"])
+        clave_destino = (sku, t["TIENDA_DESTINO"])
+        cantidad = float(t["CANTIDAD"])
+
+        # ORIGEN
+        if clave_origen in conocidos:
+            inicial = saldo.get(clave_origen, 0.0)
+            resultante = inicial - cantidad
+            saldo[clave_origen] = resultante
+            t["STOCK_INICIAL_ORIGEN"] = formatear_cantidad(inicial)
+            t["STOCK_NUEVO_ORIGEN"] = formatear_cantidad(resultante)
+            if resultante < 0:
+                incidencias.append(
+                    f"SKU {sku}: transferir {formatear_cantidad(cantidad)} de la tienda "
+                    f"{t['TIENDA_ORIGEN']} a la {t['TIENDA_DESTINO']} deja saldo "
+                    f"negativo ({formatear_cantidad(resultante)})"
+                )
+        else:
+            # SKU+tienda ausente del archivo de stock: se deja en blanco
+            t["STOCK_INICIAL_ORIGEN"] = ""
+            t["STOCK_NUEVO_ORIGEN"] = ""
+
+        # DESTINO
+        if clave_destino in conocidos:
+            inicial = saldo.get(clave_destino, 0.0)
+            resultante = inicial + cantidad
+            saldo[clave_destino] = resultante
+            t["STOCK_INICIAL_DESTINO"] = formatear_cantidad(inicial)
+            t["STOCK_NUEVO_DESTINO"] = formatear_cantidad(resultante)
+        else:
+            t["STOCK_INICIAL_DESTINO"] = ""
+            t["STOCK_NUEVO_DESTINO"] = ""
+
+    return incidencias
 
 
 # ------------------------------------------------------------
@@ -321,6 +507,8 @@ def procesar_movimientos(df_mov, mapeo, debug_container, sheet_name=""):
             transfers.append({
                 "origen_hoja": sheet_name,
                 "subsidiaria_num": sub_origen,
+                "TIENDA_ORIGEN": o_id,
+                "TIENDA_DESTINO": d_id,
                 "UNIDAD_ORIGEN": unidad_origen,
                 "UNIDAD_DESTINO": unidad_destino,
                 "CENTRO_COSTO": centro_origen,
@@ -344,10 +532,19 @@ def procesar_movimientos(df_mov, mapeo, debug_container, sheet_name=""):
     return transfers, incidencias
 
 
-def generar_excel_bytes(transfers):
-    """Genera el libro de Excel con una hoja por hoja de origen."""
+def generar_excel_bytes(transfers, con_stock=False):
+    """
+    Genera el libro de Excel con una hoja por hoja de origen.
+
+    Si con_stock es True, agrega las columnas de stock inicial/resultante
+    y conserva el orden de procesamiento (los saldos son acumulativos, por
+    lo que reordenar haria ilegible la secuencia de descuentos).
+    """
     if not transfers:
         return None
+
+    columnas = COLUMNAS_OT + (COLUMNAS_OT_STOCK if con_stock else [])
+    encabezados = ENCABEZADOS_OT + (ENCABEZADOS_OT_STOCK if con_stock else [])
 
     grupos = {}
     for t in transfers:
@@ -376,11 +573,12 @@ def generar_excel_bytes(transfers):
         df["EMPLEADO"] = ""
         df["TRANSPORTISTA"] = "TRANSPORTE PROPIO"
 
-        df = df[COLUMNAS_OT]
-        df = df.sort_values(by="ID_EXTERNO", ascending=False).reset_index(drop=True)
+        df = df[columnas]
+        if not con_stock:
+            df = df.sort_values(by="ID_EXTERNO", ascending=False).reset_index(drop=True)
 
         ws = wb.create_sheet(title=str(hoja_nombre)[:31])
-        ws.append(ENCABEZADOS_OT)
+        ws.append(encabezados)
         for _, row in df.iterrows():
             ws.append(list(row.values))
 
@@ -572,9 +770,20 @@ def generar_csv(df, separador):
 def pagina_transferencias():
     st.title("📦 Generador de OT desde movimientos")
 
-    uploaded_file = st.file_uploader("Sube tu archivo Excel", type=["xlsx"])
+    uploaded_file = st.file_uploader("Sube tu archivo Excel de movimientos", type=["xlsx"])
+
+    st.markdown("---")
+    st.subheader("📊 Stock (opcional)")
+    st.caption(
+        "Sube el CSV de existencias para calcular el saldo resultante en la "
+        "tienda de origen y destino. Requiere las columnas `SKU`, "
+        "`Ubicación del inventario` y `Físico en ubicación`."
+    )
+    stock_file = st.file_uploader("Sube el CSV de stock", type=["csv"], key="stock_csv")
+    st.markdown("---")
+
     if not uploaded_file:
-        st.info("Sube un archivo Excel para comenzar.")
+        st.info("Sube un archivo Excel de movimientos para comenzar.")
         return
 
     try:
@@ -587,6 +796,16 @@ def pagina_transferencias():
         todas_hojas[hoja].columns = [str(c) for c in todas_hojas[hoja].columns]
 
     st.success(f"✅ Archivo cargado con {len(todas_hojas)} hoja(s): {list(todas_hojas.keys())}")
+
+    stock = {}
+    if stock_file is not None:
+        stock, avisos_stock = cargar_stock(stock_file)
+        for aviso in avisos_stock:
+            st.warning(f"⚠️ {aviso}")
+        if stock:
+            st.success(f"✅ Stock cargado: {len(stock)} combinaciones SKU + tienda.")
+        else:
+            st.error("❌ No se cargó ningún registro de stock. Se omitirá el cálculo.")
 
     primera_hoja = list(todas_hojas.keys())[0]
     st.subheader(f"Vista previa de la hoja '{primera_hoja}' (primeras 10 filas)")
@@ -615,11 +834,26 @@ def pagina_transferencias():
         st.error("No se generaron transferencias. Revisa el log de arriba.")
         return
 
-    if todas_incidencias:
-        st.warning(f"⚠️ Se registraron {len(todas_incidencias)} incidencia(s). "
-                   "Revisa el log antes de importar a NetSuite.")
+    incidencias_stock = []
+    if stock:
+        incidencias_stock = calcular_stock_resultante(all_transfers, stock)
 
-    excel_data = generar_excel_bytes(all_transfers)
+    if todas_incidencias:
+        st.warning(
+            f"⚠️ Se registraron {len(todas_incidencias)} incidencia(s) de procesamiento. "
+            "Revisa el log antes de importar a NetSuite."
+        )
+
+    if incidencias_stock:
+        st.error(f"🔴 {len(incidencias_stock)} transferencia(s) dejan saldo negativo:")
+        for msg in incidencias_stock:
+            st.write(f"   • {msg}")
+        st.caption(
+            "Las transferencias se generan de todos modos; el saldo negativo "
+            "queda reflejado en la columna STOCK NUEVO ORIGEN."
+        )
+
+    excel_data = generar_excel_bytes(all_transfers, con_stock=bool(stock))
     st.success(f"✅ Se generaron {len(all_transfers)} transferencias en total")
     st.download_button(
         "📥 Descargar Excel",
