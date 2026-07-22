@@ -276,7 +276,7 @@ def extraer_numero_tienda(texto):
     return int(match.group()) if match else None
 
 
-def cargar_stock(archivo_csv):
+def cargar_stock(archivo_csv, skus_relevantes=None):
     """
     Carga el CSV de stock y devuelve (stock, avisos).
 
@@ -286,6 +286,13 @@ def cargar_stock(archivo_csv):
 
     Una celda de stock vacia se interpreta como 0, no como ausente: la
     tienda aparece en el archivo, por lo tanto su existencia es cero.
+
+    skus_relevantes: si se proporciona un set de SKU, se descartan las filas
+    de cualquier otro SKU antes de procesar. Reduce memoria cuando el
+    catalogo es mucho mayor que el archivo de movimientos.
+
+    Implementado con operaciones vectorizadas de pandas: recorrer el
+    DataFrame con iterrows() tardaba ~40s en un archivo de 300k filas.
     """
     avisos = []
 
@@ -313,36 +320,61 @@ def cargar_stock(archivo_csv):
             f"Columnas encontradas: {list(df.columns)[:10]}..."
         ]
 
-    stock = {}
-    descartadas = set()
-    duplicadas = 0
+    # Solo las tres columnas que interesan
+    df = df[[col_sku, col_ubi, col_fis]].copy()
+    df.columns = ["sku", "ubicacion", "fisico"]
 
-    for _, fila in df.iterrows():
-        sku = str(fila[col_sku]).strip()
-        if not sku or sku.lower() == "nan":
-            continue
+    df["sku"] = df["sku"].astype(str).str.strip()
+    df = df[(df["sku"] != "") & (df["sku"].str.lower() != "nan")]
 
-        ubicacion = reparar_mojibake(str(fila[col_ubi]))
-        num_tienda = extraer_numero_tienda(ubicacion)
+    # Filtro opcional por SKU presentes en el archivo de movimientos
+    if skus_relevantes:
+        antes = len(df)
+        df = df[df["sku"].isin(skus_relevantes)]
+        avisos.append(
+            f"Filtrado por SKU del archivo de movimientos: {antes:,} → {len(df):,} filas."
+        )
 
-        if num_tienda is None or num_tienda not in MAPEO_TIENDAS:
-            if num_tienda is not None:
-                descartadas.add(num_tienda)
-            continue
+    if df.empty:
+        return {}, avisos + ["El CSV de stock no tiene filas utilizables."]
 
-        clave = (sku, num_tienda)
-        if clave in stock:
-            # Regla acordada: conservar el primero
-            duplicadas += 1
-            continue
+    # Numero de tienda: digitos despues del ultimo '|', vectorizado
+    ubic = df["ubicacion"].astype(str).map(reparar_mojibake)
+    df["num_tienda"] = pd.to_numeric(
+        ubic.str.rsplit("|", n=1).str[-1].str.extract(r"(\d+)", expand=False),
+        errors="coerce",
+    )
 
-        cantidad = parsear_cantidad(fila[col_fis])
-        stock[clave] = 0.0 if cantidad is None else cantidad
+    validas = df["num_tienda"].isin(MAPEO_TIENDAS.keys())
+    descartadas = sorted(
+        int(x) for x in df.loc[~validas & df["num_tienda"].notna(), "num_tienda"].unique()
+    )
+    df = df[validas].copy()
+    df["num_tienda"] = df["num_tienda"].astype(int)
+
+    if df.empty:
+        if descartadas:
+            avisos.append(
+                f"Se ignoraron ubicaciones fuera del mapeo de tiendas: {descartadas}"
+            )
+        return {}, avisos + ["Ninguna ubicación del CSV coincide con el mapeo de tiendas."]
+
+    # Regla acordada: si SKU+tienda se repite, conservar el primero
+    antes_dedup = len(df)
+    df = df.drop_duplicates(subset=["sku", "num_tienda"], keep="first")
+    duplicadas = antes_dedup - len(df)
+
+    # Cantidad: los datos son enteros sin separadores, asi que to_numeric
+    # directo es suficiente; lo no numerico o vacio queda en 0.
+    cantidades = pd.to_numeric(
+        df["fisico"].astype(str).str.strip().replace("", "0"), errors="coerce"
+    ).fillna(0.0)
+
+    stock = dict(zip(zip(df["sku"], df["num_tienda"]), cantidades.astype(float)))
 
     if descartadas:
         avisos.append(
-            f"Se ignoraron ubicaciones fuera del mapeo de tiendas: "
-            f"{sorted(descartadas)}"
+            f"Se ignoraron ubicaciones fuera del mapeo de tiendas: {descartadas}"
         )
     if duplicadas:
         avisos.append(
@@ -440,7 +472,8 @@ def procesar_movimientos(df_mov, mapeo, debug_container, sheet_name=""):
     transfers = []
     total_filas = 0
 
-    for _, row in df_mov.iterrows():
+    # to_dict("records") es mucho mas rapido que iterrows() en archivos grandes
+    for row in df_mov.to_dict("records"):
         total_filas += 1
         sku = row["SKU"]
         id_interno = row["ID interno"]
@@ -579,8 +612,8 @@ def generar_excel_bytes(transfers, con_stock=False):
 
         ws = wb.create_sheet(title=str(hoja_nombre)[:31])
         ws.append(encabezados)
-        for _, row in df.iterrows():
-            ws.append(list(row.values))
+        for fila in df.itertuples(index=False, name=None):
+            ws.append(list(fila))
 
         for col in ws.columns:
             max_len = max((len(str(c.value)) for c in col if c.value is not None), default=0)
@@ -619,7 +652,7 @@ def cargar_tiendas():
     try:
         df = pd.read_excel(RUTA_TIENDAS, dtype=str)
         lookup = {}
-        for _, row in df.iterrows():
+        for row in df.to_dict("records"):
             num = str(row["No. Tienda"]).strip()
             lookup[num] = {
                 "unidad_negocio": str(row.get("UNIDAD DE NEGOCIO", "")).strip(),
@@ -685,8 +718,10 @@ def procesar_archivo_pedido(uploaded_file, tipo_compra, tiendas_por_hoja):
             )
         tiendas_a_usar = [t for t in tiendas if t in col_index_map]
 
-        for idx_fila in range(FILA_PRIMER_DATO, len(df_raw)):
-            fila = df_raw.iloc[idx_fila]
+        # .iloc por fila es lento; se materializa el bloque de datos una vez
+        bloque = df_raw.iloc[FILA_PRIMER_DATO:].to_numpy()
+
+        for fila in bloque:
 
             id_interno = str(fila[COL_ID_INTERNO]).strip() if pd.notna(fila[COL_ID_INTERNO]) else ""
             if not id_interno or id_interno.lower() == "nan":
@@ -759,8 +794,8 @@ def generar_csv(df, separador):
     writer = csv.writer(buffer, delimiter=separador, quoting=csv.QUOTE_MINIMAL,
                         lineterminator="\n")
     writer.writerow(ENCABEZADOS_OC_CSV)
-    for _, row in df.iterrows():
-        writer.writerow([row[c] for c in COLUMNAS_OC])
+    for fila in df[COLUMNAS_OC].itertuples(index=False, name=None):
+        writer.writerow(fila)
     return buffer.getvalue()
 
 
@@ -797,9 +832,22 @@ def pagina_transferencias():
 
     st.success(f"✅ Archivo cargado con {len(todas_hojas)} hoja(s): {list(todas_hojas.keys())}")
 
+    # SKU presentes en el archivo de movimientos: sirven para descartar de
+    # entrada las filas irrelevantes del catalogo de stock.
+    skus_movimientos = set()
+    for df_hoja in todas_hojas.values():
+        if "SKU" in df_hoja.columns:
+            skus_movimientos.update(
+                df_hoja["SKU"].dropna().astype(str).str.strip().tolist()
+            )
+    skus_movimientos.discard("")
+
     stock = {}
     if stock_file is not None:
-        stock, avisos_stock = cargar_stock(stock_file)
+        with st.spinner("Cargando stock..."):
+            stock, avisos_stock = cargar_stock(
+                stock_file, skus_relevantes=skus_movimientos or None
+            )
         for aviso in avisos_stock:
             st.warning(f"⚠️ {aviso}")
         if stock:

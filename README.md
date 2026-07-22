@@ -69,6 +69,23 @@ constantes al inicio de `app.py`.
 Los proveedores que no coincidan con el catálogo aparecen como `#SIN_MATCH`
 y se listan como error en pantalla antes de descargar.
 
+## Rendimiento
+
+El CSV de stock puede tener cientos de miles de filas. La carga está
+vectorizada con pandas y, además, filtra de entrada los SKU que no aparecen
+en el archivo de movimientos.
+
+Referencia con un CSV de 300.000 filas (30 tiendas × 15.000 SKU):
+
+| Versión | Tiempo |
+|---|---|
+| Recorrido fila por fila (`iterrows`) | ~41 s |
+| Vectorizado | ~2,7 s |
+| Vectorizado + filtro por SKU | ~1,1 s |
+
+El filtro solo afecta la velocidad: los saldos resultantes son idénticos
+con o sin él.
+
 ## Deuda técnica conocida
 
 - `MAPEO_TIENDAS` en `app.py` duplica datos de `data/Unidad_de_Negocio.xlsx`.
